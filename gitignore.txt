@@ -3,3 +3,6 @@ __pycache__/
 chroma_db/
 .env
 *.log
+git branch -M main
+git remote add origin https://github.com/BaselAtiyire/real-estate-rag-assistant.git
+git push -u origin main
