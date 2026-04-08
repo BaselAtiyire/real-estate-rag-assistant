@@ -10,12 +10,15 @@ opentelemetry-api==1.22.0
 opentelemetry-sdk==1.22.0
 opentelemetry-exporter-otlp-proto-grpc==1.22.0
 
+# NumPy 2.0 removed np.float_ which chromadb 0.4.x uses
+numpy<2.0
+
 # LangChain stack
 langchain
 langchain-community
 langchain-text-splitters
 langchain-groq
 
-# Embeddings — compatible with Python 3.13
+# Embeddings
 sentence-transformers==3.3.1
 torch==2.5.1
