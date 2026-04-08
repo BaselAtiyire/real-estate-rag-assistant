@@ -1,21 +1,77 @@
 import os
 import shutil
 import streamlit as st
+from datetime import datetime
 
-st.set_page_config(page_title="Real Estate Research Tool", layout="wide")
-st.title("Real Estate Research Tool")
-st.caption("Research real estate articles (RAG) → ask questions → get answers with citations.")
+st.set_page_config(
+    page_title="Real Estate Research Tool",
+    layout="wide",
+    page_icon="🏠",
+)
 
-# ---- Safe imports (prevents blank page) ----
+# ---- Custom CSS ----
+st.markdown("""
+<style>
+    .main { background-color: #f8f9fa; }
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    .answer-box {
+        background-color: #ffffff;
+        border-left: 4px solid #2e86de;
+        padding: 1.2rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+    }
+    .source-chip {
+        background-color: #eaf0fb;
+        border-radius: 20px;
+        padding: 4px 12px;
+        font-size: 0.8rem;
+        margin: 4px;
+        display: inline-block;
+    }
+    .preview-box {
+        background-color: #f1f3f5;
+        border-radius: 6px;
+        padding: 0.8rem;
+        font-size: 0.85rem;
+        color: #444;
+        margin-bottom: 0.5rem;
+    }
+    .chat-question {
+        background-color: #2e86de;
+        color: white;
+        padding: 0.6rem 1rem;
+        border-radius: 12px 12px 0 12px;
+        margin-bottom: 0.3rem;
+        font-weight: 600;
+    }
+    .chat-answer {
+        background-color: #ffffff;
+        border: 1px solid #ddd;
+        padding: 0.6rem 1rem;
+        border-radius: 0 12px 12px 12px;
+        margin-bottom: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---- Header ----
+st.markdown("# 🏠 Real Estate Research Tool")
+st.caption("Index real estate articles → ask questions → get AI answers with citations.")
+
+# ---- Safe imports ----
 try:
     from ingest import fetch_url_text
-    from rag import upsert_urls_text, answer_question, PERSIST_DIR
+    from rag import upsert_urls_text, answer_question, PERSIST_DIR, get_indexed_urls
 except Exception as e:
     st.error("❌ Import error (app could not start).")
     st.exception(e)
     st.stop()
 
-# --- Preloaded demo URLs (hardcoded) ---
+# ---- Demo URLs ----
 DEFAULT_URLS = [
     "https://www.yahoo.com/lifestyle/articles/modesto-house-featured-zillow-gone-222629056.html?fr=yhssrp_catchall",
     "https://www.realestateagents.com/blog/all/how-do-rising-interest-rates-impact-your-mortgage-payment",
@@ -24,16 +80,13 @@ DEFAULT_URLS = [
 
 
 def reset_vector_db():
-    """Deletes persisted Chroma DB so you can re-index cleanly."""
     if os.path.exists(PERSIST_DIR):
         shutil.rmtree(PERSIST_DIR, ignore_errors=True)
 
 
 def run_ingest(urls):
-    """Fetches text from URLs and indexes into Chroma. Returns (added_chunks, good_urls, bad_urls)."""
     pairs = []
     bad = []
-
     progress = st.progress(0)
     total = max(len(urls), 1)
 
@@ -45,34 +98,38 @@ def run_ingest(urls):
         progress.progress(int(idx / total * 100))
 
     good = [(u, t) for (u, t) in pairs if t and len(t) >= 250]
-    added_chunks = upsert_urls_text(good)
-    return added_chunks, [u for (u, _) in good], bad
+    added_chunks, skipped = upsert_urls_text(good)
+    return added_chunks, [u for (u, _) in good], bad, skipped
 
 
-# ---- Session defaults ----
+# ---- Session State ----
 if "ready" not in st.session_state:
     st.session_state.ready = False
 if "last_sources" not in st.session_state:
     st.session_state.last_sources = []
 if "last_ingest_summary" not in st.session_state:
     st.session_state.last_ingest_summary = ""
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 
+# ==============================
+# SIDEBAR
+# ==============================
 with st.sidebar:
-    st.subheader("Sources")
+    st.markdown("## ⚙️ Settings")
 
     mode = st.radio(
-        "Choose source mode",
+        "Source mode",
         ["Demo (preloaded URLs)", "Custom (paste your own URLs)"],
         index=0,
     )
 
     if mode == "Demo (preloaded URLs)":
         urls = DEFAULT_URLS
-        st.markdown("**Demo URLs loaded:**")
+        st.markdown("**Demo URLs:**")
         for i, u in enumerate(urls, start=1):
-            st.write(f"URL {i}")
-            st.code(u)
+            st.caption(f"URL {i}: {u[:60]}...")
     else:
         url1 = st.text_input("URL 1", placeholder="https://...")
         url2 = st.text_input("URL 2", placeholder="https://...")
@@ -82,109 +139,181 @@ with st.sidebar:
     st.divider()
     k = st.slider("Top-k chunks to retrieve", min_value=2, max_value=10, value=4)
 
+    st.divider()
     colA, colB = st.columns(2)
     with colA:
-        process = st.button("Process URLs", use_container_width=True)
+        process = st.button("🔄 Process URLs", use_container_width=True)
     with colB:
-        clear_db = st.button("Clear Knowledge Base", use_container_width=True)
-
-    # ✅ Better auto-ingest UX
-    auto_ingest = st.checkbox("Auto-ingest demo sources", value=False)
-
-    if auto_ingest and mode == "Demo (preloaded URLs)":
-        st.caption("Auto-ingest is ON (demo mode).")
-        run_now = st.button("Run Auto-Ingest Now", use_container_width=True)
-    else:
-        run_now = False
+        clear_db = st.button("🗑️ Clear KB", use_container_width=True)
 
     st.divider()
-    st.subheader("API Key Check")
-    if os.getenv("GROQ_API_KEY"):
-        st.success("GROQ_API_KEY found ✅")
+
+    # Show indexed URLs
+    st.markdown("### 📚 Indexed Sources")
+    indexed = get_indexed_urls()
+    if indexed:
+        for u in indexed:
+            st.caption(f"✅ {u[:55]}...")
     else:
-        st.warning("GROQ_API_KEY not found. Add it to your .env file.")
+        st.caption("Nothing indexed yet.")
+
+    st.divider()
+    st.markdown("### 🔑 API Status")
+    if os.getenv("GROQ_API_KEY"):
+        st.success("GROQ_API_KEY ✅")
+    else:
+        st.error("GROQ_API_KEY missing ❌")
 
 
-# ---- Clear DB ----
+# ==============================
+# CLEAR DB
+# ==============================
 if clear_db:
     reset_vector_db()
     st.session_state.ready = False
     st.session_state.last_sources = []
+    st.session_state.chat_history = []
     st.session_state.last_ingest_summary = "🧹 Knowledge base cleared."
-    st.toast("Cleared Chroma DB", icon="🧹")
+    st.toast("Cleared knowledge base", icon="🧹")
 
 
-# ---- Auto-ingest trigger (first load) ----
-# If auto_ingest is checked, we ingest once unless already ready.
-if auto_ingest and mode == "Demo (preloaded URLs)" and not st.session_state.ready:
-    # Show an obvious message so it doesn't feel like "nothing happened"
-    st.info("Auto-ingest is enabled. Indexing demo sources now…")
-    process = True
-
-# ---- Manual "Run Auto-Ingest Now" ----
-if run_now:
-    process = True
-
-# ---- Process URLs ----
+# ==============================
+# PROCESS URLs
+# ==============================
 if process:
     if not urls:
         st.warning("Add at least one URL.")
     else:
         with st.spinner("Fetching & indexing sources..."):
-            added_chunks, good_urls, bad_urls = run_ingest(urls)
+            added_chunks, good_urls, bad_urls, skipped_urls = run_ingest(urls)
 
         st.session_state.last_sources = good_urls
-        st.session_state.ready = added_chunks > 0
+        st.session_state.ready = added_chunks > 0 or len(get_indexed_urls()) > 0
 
-        lines = [f"✅ Indexed **{added_chunks}** chunks from **{len(good_urls)}** source(s)."]
+        lines = []
+        if added_chunks > 0:
+            lines.append(f"✅ Indexed **{added_chunks}** chunks from **{len(good_urls)}** source(s).")
+        if skipped_urls:
+            lines.append(f"⏭️ Skipped **{len(skipped_urls)}** already-indexed URL(s).")
         if bad_urls:
-            lines.append("⚠️ Could not extract enough text from:")
+            lines.append("⚠️ Could not extract text from:")
             lines.extend([f"- {u}" for u in bad_urls])
-
-        # extra clarity for demo mode
-        if mode == "Demo (preloaded URLs)" and st.session_state.ready:
-            lines.append("🚀 Demo knowledge base is ready. Ask a question below!")
+        if not lines:
+            lines.append("ℹ️ No new content to index.")
 
         st.session_state.last_ingest_summary = "\n".join(lines)
+        st.rerun()
 
-
-# ---- Status panel ----
 if st.session_state.last_ingest_summary:
     st.info(st.session_state.last_ingest_summary)
 
 st.divider()
 
-# ---- Q&A ----
-st.subheader("Ask a Question")
-question = st.text_input(
-    "Ask about the processed sources",
-    placeholder="e.g., How do rising interest rates affect mortgage payments?",
-)
+# ==============================
+# Q&A SECTION
+# ==============================
+col_main, col_history = st.columns([3, 2])
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    ask = st.button("Get Answer", use_container_width=True)
-with col2:
-    st.write("")
-    st.write("Tip: Index sources first, then ask questions.")
+with col_main:
+    st.markdown("## 💬 Ask a Question")
+    question = st.text_input(
+        "Your question",
+        placeholder="e.g., How do rising interest rates affect mortgage payments?",
+    )
 
-if ask:
-    if not question.strip():
-        st.warning("Type a question first.")
-    elif not st.session_state.ready:
-        st.warning("No sources indexed yet. Click **Process URLs** (or Auto-Ingest).")
-    elif not os.getenv("GROQ_API_KEY"):
-        st.error("Missing GROQ_API_KEY. Add it to .env, then restart Streamlit.")
-    else:
-        with st.spinner("Searching sources + generating answer..."):
-            answer, sources = answer_question(question.strip(), k=k)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        ask = st.button("🔍 Get Answer", use_container_width=True)
+    with col2:
+        clear_chat = st.button("🗑️ Clear Chat History", use_container_width=True)
 
-        st.markdown("## Answer")
-        st.write(answer)
+    if clear_chat:
+        st.session_state.chat_history = []
+        st.toast("Chat history cleared", icon="🗑️")
 
-        st.markdown("## Sources")
-        if sources:
-            for s in sources:
-                st.write(s)
+    if ask:
+        if not question.strip():
+            st.warning("Type a question first.")
+        elif not st.session_state.ready and not get_indexed_urls():
+            st.warning("No sources indexed yet. Click **Process URLs** first.")
+        elif not os.getenv("GROQ_API_KEY"):
+            st.error("Missing GROQ_API_KEY.")
         else:
-            st.write("No sources returned.")
+            with st.spinner("Searching sources and generating answer..."):
+                answer, sources, previews = answer_question(question.strip(), k=k)
+
+            # Save to chat history
+            st.session_state.chat_history.append({
+                "question": question.strip(),
+                "answer": answer,
+                "sources": sources,
+                "previews": previews,
+                "time": datetime.now().strftime("%H:%M:%S"),
+            })
+            st.session_state.ready = True
+
+    # Show latest answer
+    if st.session_state.chat_history:
+        latest = st.session_state.chat_history[-1]
+
+        st.markdown("### 📝 Answer")
+        st.markdown(
+            f'<div class="answer-box">{latest["answer"]}</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("### 🔗 Sources")
+        for s in latest["sources"]:
+            st.markdown(f'<span class="source-chip">🔗 {s}</span>', unsafe_allow_html=True)
+
+        st.markdown("### 🔍 Chunk Previews")
+        for p in latest["previews"]:
+            with st.expander(f"📄 {p['source'][:80]}..."):
+                st.markdown(
+                    f'<div class="preview-box">{p["preview"]}...</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # Export answer as text file
+        st.divider()
+        export_text = f"""Real Estate Research Tool - Export
+Time: {latest['time']}
+
+Question:
+{latest['question']}
+
+Answer:
+{latest['answer']}
+
+Sources:
+{chr(10).join(latest['sources'])}
+"""
+        st.download_button(
+            label="⬇️ Export Answer as TXT",
+            data=export_text,
+            file_name=f"answer_{latest['time'].replace(':', '-')}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+
+# ==============================
+# CHAT HISTORY PANEL
+# ==============================
+with col_history:
+    st.markdown("## 📜 Chat History")
+    if not st.session_state.chat_history:
+        st.caption("No questions asked yet.")
+    else:
+        for i, entry in enumerate(reversed(st.session_state.chat_history), start=1):
+            st.markdown(
+                f'<div class="chat-question">Q: {entry["question"]}</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div class="chat-answer">{entry["answer"][:300]}{"..." if len(entry["answer"]) > 300 else ""}</div>',
+                unsafe_allow_html=True,
+            )
+            st.caption(f"🕐 {entry['time']}")
+            if i < len(st.session_state.chat_history):
+                st.divider()
