@@ -1,13 +1,11 @@
 import os
 from typing import List, Tuple
 from dotenv import load_dotenv
-
 from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
 
 load_dotenv()
 
@@ -45,14 +43,11 @@ def upsert_urls_text(url_text_pairs: List[Tuple[str, str]]) -> int:
     for url, text in url_text_pairs:
         if text and text.strip():
             docs.append(Document(page_content=text.strip(), metadata={"source": url}))
-
     if not docs:
         return 0
-
     chunks = _chunk_docs(docs)
     vs = _vectorstore()
     vs.add_documents(chunks)
-    vs.persist()
     return len(chunks)
 
 
@@ -97,6 +92,5 @@ Answer format:
 - 1–4 sentence direct answer
 - Optional bullets with key points
 """
-
     res = llm.invoke(prompt)
     return res.content.strip(), sources_unique
