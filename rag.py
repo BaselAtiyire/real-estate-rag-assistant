@@ -6,8 +6,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
-import chromadb
-from chromadb.config import Settings
 import streamlit as st
 
 load_dotenv()
@@ -18,36 +16,16 @@ COLLECTION_NAME = "real_estate_research"
 
 @st.cache_resource
 def _embeddings():
+    """Cached embedding model — loads once, stays in memory."""
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2")
 
 
 def _vectorstore():
-    """Explicitly initialize tenant/database before connecting."""
-    os.makedirs(PERSIST_DIR, exist_ok=True)
-
-    # Initialize the DB system (creates tenant + database if missing)
-    admin_client = chromadb.AdminClient(Settings(
-        chroma_db_impl="duckdb+parquet",
-        persist_directory=PERSIST_DIR,
-        anonymized_telemetry=False,
-    ))
-
-    try:
-        admin_client.create_tenant(chromadb.DEFAULT_TENANT)
-    except Exception:
-        pass  # already exists
-
-    try:
-        admin_client.create_database(chromadb.DEFAULT_DATABASE, chromadb.DEFAULT_TENANT)
-    except Exception:
-        pass  # already exists
-
-    client = chromadb.PersistentClient(path=PERSIST_DIR)
-
+    """Simple persist_directory approach — works with chromadb 0.4.24."""
     return Chroma(
-        client=client,
         collection_name=COLLECTION_NAME,
         embedding_function=_embeddings(),
+        persist_directory=PERSIST_DIR,
     )
 
 
@@ -61,6 +39,7 @@ def _chunk_docs(docs: List[Document]) -> List[Document]:
 
 
 def get_indexed_urls() -> set:
+    """Returns the set of URLs already stored in Chroma."""
     try:
         vs = _vectorstore()
         data = vs.get()
@@ -71,6 +50,11 @@ def get_indexed_urls() -> set:
 
 
 def upsert_urls_text(url_text_pairs: List[Tuple[str, str]]) -> Tuple[int, List[str]]:
+    """
+    Takes [(url, text), ...], skips already-indexed URLs,
+    chunks new ones and stores in Chroma.
+    Returns (number of chunks added, list of skipped URLs).
+    """
     already_indexed = get_indexed_urls()
     skipped = []
     docs: List[Document] = []
@@ -92,6 +76,10 @@ def upsert_urls_text(url_text_pairs: List[Tuple[str, str]]) -> Tuple[int, List[s
 
 
 def answer_question(question: str, k: int = 4) -> Tuple[str, List[str], List[str]]:
+    """
+    Retrieves top-k chunks, asks Groq LLM.
+    Returns (answer, unique_sources, chunk_previews).
+    """
     vs = _vectorstore()
     results = vs.similarity_search(question, k=k)
 
