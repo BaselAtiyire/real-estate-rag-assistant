@@ -6,6 +6,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+import chromadb
 import streamlit as st
 
 load_dotenv()
@@ -21,10 +22,12 @@ def _embeddings():
 
 
 def _vectorstore():
+    """Uses PersistentClient — required for chromadb 0.5.x."""
+    client = chromadb.PersistentClient(path=PERSIST_DIR)
     return Chroma(
+        client=client,
         collection_name=COLLECTION_NAME,
         embedding_function=_embeddings(),
-        persist_directory=PERSIST_DIR,
     )
 
 
