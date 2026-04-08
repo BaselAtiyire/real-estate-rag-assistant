@@ -4,9 +4,11 @@ requests
 trafilatura
 numpy<2.0
 chromadb==0.5.23
+protobuf>=4.25
 langchain
 langchain-community
 langchain-chroma
+langchain-huggingface
 langchain-text-splitters
 langchain-groq
 sentence-transformers==3.3.1
