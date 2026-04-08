@@ -2,9 +2,20 @@ streamlit
 python-dotenv
 requests
 trafilatura
-chromadb
+
+# Pinned to avoid protobuf/opentelemetry crash
+chromadb==0.4.24
+protobuf==3.20.3
+opentelemetry-api==1.22.0
+opentelemetry-sdk==1.22.0
+opentelemetry-exporter-otlp-proto-grpc==1.22.0
+
+# LangChain stack
 langchain
 langchain-community
 langchain-text-splitters
 langchain-groq
-sentence-transformers
+
+# Embeddings — pin to avoid tokenizers build issues on Python 3.13
+sentence-transformers==2.7.0
+torch==2.2.2
