@@ -1,11 +1,14 @@
 import os
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+os.environ["CHROMA_TELEMETRY"] = "false"
+
 from typing import List, Tuple
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import Chroma
 import streamlit as st
 
 load_dotenv()
@@ -21,7 +24,7 @@ def _embeddings():
 
 
 def _vectorstore():
-    """Simple persist_directory approach — works with chromadb 0.4.24."""
+    """Uses langchain_community Chroma — stable with chromadb 0.4.24."""
     return Chroma(
         collection_name=COLLECTION_NAME,
         embedding_function=_embeddings(),
